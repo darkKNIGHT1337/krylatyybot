@@ -13,35 +13,28 @@ TELEGRAM BOT — Приветственный бот с видео-контен�
 
 ТРЕБОВАНИЯ К НАСТРОЙКЕ:
 -----------------------
-  1. Заполни блок КОНФИГУРАЦИЯ ниже (токен, ID канала, ссылки)
-  2. Добавь бота в основной канал как АДМИНИСТРАТОРА
+  1. Заполни блок КОНФИГУРАЦИЯ ниже (токен, ID каналов, ссылки)
+  2. Добавь бота в ОСНОВНОЙ КАНАЛ как АДМИНИСТРАТОРА
      (нужно право «видеть участников» / «Add Members»)
-  3. Положи видео-файлы в папку videos/ (или вставь file_id)
+  3. Добавь бота в КАНАЛ С ВИДЕО как АДМИНИСТРАТОРА
+     (нужно право читать сообщения)
   4. Пользователи ДОЛЖНЫ нажать /start в боте хотя бы раз,
      прежде чем бот сможет писать им в личку
 
-КАК ПОЛУЧИТЬ file_id СВОЕГО ВИДЕО:
-------------------------------------
-  1. Запусти бота: python bot.py
-  2. Отправь видео боту в личные сообщения
-  3. Бот выведет file_id в консоль (лог INFO)
-  4. Скопируй file_id и вставь в нужную переменную ниже
+КАК РАБОТАЕТ ВИДЕО:
+--------------------
+  Бот копирует видео напрямую из Telegram-канала по ID сообщений.
+  Никаких локальных файлов не нужно — только укажи:
+    VIDEO_SOURCE_CHANNEL  — username канала с видео
+    VIDEO_NOTE_MSG_ID     — ID сообщения с кружочком
+    PRIVATE_CHANNEL_MSG_ID, COPYTRADING_MSG_ID, FREE_LESSON_MSG_ID — ID видео
 
-СТРУКТУРА ПАПОК:
------------------
-  bot.py
-  requirements.txt
-  videos/
-      greeting_note.mp4   ← видео-кружочек
-      private_channel.mp4 ← видео для кнопки «Приватный канал»
-      copytrading.mp4     ← видео для кнопки «Копитрейдинг»
-      free_lesson.mp4     ← видео для кнопки «Бесплатный видео-урок»
+  Ссылка на сообщение: https://t.me/channel/123  →  message_id = 123
 ============================================================================
 """
 
 import asyncio
 import logging
-from typing import Optional
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
@@ -50,7 +43,6 @@ from aiogram.types import (
     ChatMemberUpdated,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    FSInputFile,
 )
 from aiogram.filters import Command
 from aiogram.filters.chat_member_updated import ChatMemberUpdatedFilter, JOIN_TRANSITION
@@ -90,35 +82,35 @@ ADMIN_LINK: str = "https://t.me/krylaty_official"
 
 
 # ============================================================================
-# ВИДЕО-ФАЙЛЫ
+# ВИДЕО — ИСТОЧНИК СООБЩЕНИЙ
 # ============================================================================
 #
-# Для каждого видео — два способа задать источник:
-#   1. FILE_ID (строка вида "DQACAgI...") — самый быстрый, рекомендуется
-#   2. PATH (путь к файлу) — для первой загрузки
+# Бот копирует видео прямо из Telegram-канала методом copy_message.
+# Никаких локальных файлов не нужно.
 #
-# Если FILE_ID задан — PATH игнорируется.
-# Если файл не найден — бот отправит текстовую заглушку с описанием.
+# КАК УЗНАТЬ ID СООБЩЕНИЯ:
+#   Открой сообщение в канале → Поделиться → Копировать ссылку
+#   Ссылка вида https://t.me/krylatyvideoxxfsd/5  →  message_id = 5
 #
-# ФОРМАТ КРУЖОЧКА (video note):
-#   - MP4, квадратное видео (например 512×512), длина до 1 минуты
-#
+
+# Канал-источник видео (бот должен быть в нём администратором)
+VIDEO_SOURCE_CHANNEL: str = "@krylatyvideoxxfsd"
 
 # === ВСТАВЬ СВОЙ ВИДЕО-КРУЖОЧЕК ===
-VIDEO_NOTE_FILE_ID: Optional[str] = None               # Вставь сюда file_id кружочка
-VIDEO_NOTE_PATH: str = "videos/greeting_note.mp4"      # Или путь к файлу
+# https://t.me/krylatyvideoxxfsd/5
+VIDEO_NOTE_MSG_ID: int = 5
 
 # === ВСТАВЬ ВИДЕО ДЛЯ "Приватный канал" ===
-PRIVATE_CHANNEL_FILE_ID: Optional[str] = None
-PRIVATE_CHANNEL_PATH: str = "videos/private_channel.mp4"
+# https://t.me/krylatyvideoxxfsd/2
+PRIVATE_CHANNEL_MSG_ID: int = 2
 
 # === ВСТАВЬ ВИДЕО ДЛЯ "Копитрейдинг" ===
-COPYTRADING_FILE_ID: Optional[str] = None
-COPYTRADING_PATH: str = "videos/copytrading.mp4"
+# https://t.me/krylatyvideoxxfsd/3
+COPYTRADING_MSG_ID: int = 3
 
 # === ВСТАВЬ ВИДЕО ДЛЯ "Бесплатный видео-урок" ===
-FREE_LESSON_FILE_ID: Optional[str] = None
-FREE_LESSON_PATH: str = "videos/free_lesson.mp4"
+# https://t.me/krylatyvideoxxfsd/4
+FREE_LESSON_MSG_ID: int = 4
 
 
 # ============================================================================
@@ -180,32 +172,15 @@ async def show_main_menu(bot: Bot, chat_id: int, state: FSMContext) -> None:
       - возврате через кнопку «← Назад в меню»
       - новой подписке на канал
     """
-    # Переключаем состояние в «главное меню»
     await state.set_state(MenuStates.MAIN_MENU)
 
-    # --- Шаг 1: отправляем видео-кружочек ---
-    if VIDEO_NOTE_FILE_ID:
-        # Если уже знаем file_id — используем его (мгновенно, без загрузки)
-        await bot.send_video_note(chat_id=chat_id, video_note=VIDEO_NOTE_FILE_ID)
-    else:
-        try:
-            # === ВСТАВЬ СВОЙ ВИДЕО-КРУЖОЧЕК (путь к файлу) ===
-            file = FSInputFile(VIDEO_NOTE_PATH)
-            sent = await bot.send_video_note(chat_id=chat_id, video_note=file)
-            # Сохрани этот file_id в переменную VIDEO_NOTE_FILE_ID,
-            # чтобы не загружать файл каждый раз
-            logger.info("Кружочек загружен. file_id: %s", sent.video_note.file_id)
-        except FileNotFoundError:
-            # ЗАГЛУШКА — файл не найден, отправляем текст
-            logger.warning("Файл кружочка не найден: %s", VIDEO_NOTE_PATH)
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    "🎥 *[Здесь будет видео-кружочек]*\n\n"
-                    "_Положи файл в папку `videos/` или вставь `VIDEO_NOTE_FILE_ID` в коде_"
-                ),
-                parse_mode="Markdown",
-            )
+    # --- Шаг 1: копируем видео-кружочек из канала с материалами ---
+    # === ВСТАВЬ СВОЙ ВИДЕО-КРУЖОЧЕК === (сообщение №VIDEO_NOTE_MSG_ID в VIDEO_SOURCE_CHANNEL)
+    await bot.copy_message(
+        chat_id=chat_id,
+        from_chat_id=VIDEO_SOURCE_CHANNEL,
+        message_id=VIDEO_NOTE_MSG_ID,
+    )
 
     # --- Шаг 2: отправляем текст с клавиатурой главного меню ---
     await bot.send_message(
@@ -219,52 +194,29 @@ async def send_section_video(
     bot: Bot,
     chat_id: int,
     state: FSMContext,
-    file_id: Optional[str],
-    file_path: str,
+    message_id: int,
     section_name: str,
 ) -> None:
     """
-    Отправляет обычное видео (не кружочек) для выбранного раздела,
-    с кнопкой «← Назад в меню» под ним.
+    Копирует видео из канала-источника и отправляет его пользователю
+    с кнопкой «← Назад в меню».
     Устанавливает состояние FSM в VIEWING_VIDEO.
 
     Параметры:
-        file_id      — Telegram file_id (если уже загружено, иначе None)
-        file_path    — путь к файлу на диске
-        section_name — название раздела (для логов и заглушки)
+        message_id   — ID сообщения с видео в VIDEO_SOURCE_CHANNEL
+        section_name — название раздела (только для логов)
     """
     await state.set_state(MenuStates.VIEWING_VIDEO)
 
-    if file_id:
-        # Используем сохранённый file_id
-        await bot.send_video(
-            chat_id=chat_id,
-            video=file_id,
-            reply_markup=back_keyboard(),
-        )
-    else:
-        try:
-            file = FSInputFile(file_path)
-            sent = await bot.send_video(
-                chat_id=chat_id,
-                video=file,
-                reply_markup=back_keyboard(),
-            )
-            # Сохрани этот file_id в соответствующую переменную
-            logger.info("Видео «%s» загружено. file_id: %s", section_name, sent.video.file_id)
-        except FileNotFoundError:
-            # ЗАГЛУШКА — файл не найден
-            logger.warning("Файл видео не найден: %s", file_path)
-            await bot.send_message(
-                chat_id=chat_id,
-                text=(
-                    f"🎬 *[Видео «{section_name}»]*\n\n"
-                    f"_Файл не найден: `{file_path}`\n"
-                    "Положи файл в папку `videos/` или вставь нужный `file_id` в коде_"
-                ),
-                parse_mode="Markdown",
-                reply_markup=back_keyboard(),
-            )
+    logger.info("Отправка видео «%s» (msg_id=%d) пользователю %d", section_name, message_id, chat_id)
+
+    # Копируем сообщение из канала и сразу добавляем кнопку «Назад»
+    await bot.copy_message(
+        chat_id=chat_id,
+        from_chat_id=VIDEO_SOURCE_CHANNEL,
+        message_id=message_id,
+        reply_markup=back_keyboard(),
+    )
 
 
 # ============================================================================
@@ -366,8 +318,7 @@ async def on_btn_private(callback: CallbackQuery, state: FSMContext) -> None:
         bot=bot,
         chat_id=callback.message.chat.id,
         state=state,
-        file_id=PRIVATE_CHANNEL_FILE_ID,
-        file_path=PRIVATE_CHANNEL_PATH,
+        message_id=PRIVATE_CHANNEL_MSG_ID,
         section_name="Приватный канал",
     )
 
@@ -383,8 +334,7 @@ async def on_btn_copytrading(callback: CallbackQuery, state: FSMContext) -> None
         bot=bot,
         chat_id=callback.message.chat.id,
         state=state,
-        file_id=COPYTRADING_FILE_ID,
-        file_path=COPYTRADING_PATH,
+        message_id=COPYTRADING_MSG_ID,
         section_name="Копитрейдинг",
     )
 
@@ -400,8 +350,7 @@ async def on_btn_free_lesson(callback: CallbackQuery, state: FSMContext) -> None
         bot=bot,
         chat_id=callback.message.chat.id,
         state=state,
-        file_id=FREE_LESSON_FILE_ID,
-        file_path=FREE_LESSON_PATH,
+        message_id=FREE_LESSON_MSG_ID,
         section_name="Бесплатный видео-урок",
     )
 
@@ -431,41 +380,6 @@ async def on_btn_back(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 # ============================================================================
-# ВСПОМОГАТЕЛЬНЫЙ ХЭНДЛЕР: получить file_id отправленного видео
-# ============================================================================
-
-@dp.message(F.video)
-async def on_video_received(message: Message) -> None:
-    """
-    Вспомогательный обработчик: выводит file_id любого видео,
-    которое пользователь отправляет боту напрямую.
-    Используй это, чтобы узнать file_id своих видео.
-    """
-    file_id = message.video.file_id
-    logger.info("Получено видео. file_id: %s", file_id)
-    await message.reply(
-        f"✅ file_id этого видео:\n`{file_id}`\n\n"
-        "Скопируй и вставь в нужную переменную в конфигурации бота.",
-        parse_mode="Markdown",
-    )
-
-
-@dp.message(F.video_note)
-async def on_video_note_received(message: Message) -> None:
-    """
-    Вспомогательный обработчик: выводит file_id кружочка.
-    Отправь боту кружочек — и он вернёт file_id.
-    """
-    file_id = message.video_note.file_id
-    logger.info("Получен кружочек. file_id: %s", file_id)
-    await message.reply(
-        f"✅ file_id этого кружочка:\n`{file_id}`\n\n"
-        "Скопируй и вставь в переменную `VIDEO_NOTE_FILE_ID`.",
-        parse_mode="Markdown",
-    )
-
-
-# ============================================================================
 # ТОЧКА ВХОДА
 # ============================================================================
 
@@ -473,10 +387,11 @@ async def main() -> None:
     """Запуск бота в режиме long-polling."""
     me = await bot.get_me()
     logger.info("=" * 60)
-    logger.info("Бот запущен:  @%s  (id=%d)", me.username, me.id)
-    logger.info("Канал:        %d", MAIN_CHANNEL_ID)
-    logger.info("Отзывы:       %s", REVIEWS_LINK)
-    logger.info("Админ:        %s", ADMIN_LINK)
+    logger.info("Бот запущен:      @%s  (id=%d)", me.username, me.id)
+    logger.info("Основной канал:   %d", MAIN_CHANNEL_ID)
+    logger.info("Канал с видео:    %s", VIDEO_SOURCE_CHANNEL)
+    logger.info("Отзывы:           %s", REVIEWS_LINK)
+    logger.info("Админ:            %s", ADMIN_LINK)
     logger.info("=" * 60)
 
     # allowed_updates — явно указываем типы обновлений, которые нужны боту:
