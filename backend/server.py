@@ -72,17 +72,28 @@ def back_keyboard() -> InlineKeyboardMarkup:
 
 # ─── Bot helpers ──────────────────────────────────────────────────────────────
 async def show_main_menu(bot: Bot, chat_id: int, state: FSMContext) -> None:
-    """Отправляет кружочек + клавиатуру главного меню."""
+    """Отправляет кружочек + клавиатуру главного меню.
+    Сохраняет ID обоих сообщений в FSM, чтобы удалить их при открытии видео."""
     await state.set_state(MenuStates.MAIN_MENU)
-    await bot.copy_message(
+
+    # Кружочек — copy_message возвращает MessageId с полем .message_id
+    note_result = await bot.copy_message(
         chat_id=chat_id,
         from_chat_id=VIDEO_SOURCE_CHANNEL,
         message_id=VIDEO_NOTE_MSG_ID,
     )
-    await bot.send_message(
+
+    # Меню с 5 кнопками — send_message возвращает Message с .message_id
+    menu_msg = await bot.send_message(
         chat_id=chat_id,
         text="Выбери интересующий раздел 👇",
         reply_markup=main_menu_keyboard(),
+    )
+
+    # Сохраняем ID обоих сообщений, чтобы удалить при переходе к видео
+    await state.update_data(
+        note_msg_id=note_result.message_id,
+        menu_msg_id=menu_msg.message_id,
     )
 
 async def send_section_video(bot: Bot, chat_id: int, state: FSMContext, message_id: int) -> None:
@@ -143,16 +154,26 @@ async def handle_callbacks(callback: CallbackQuery, state: FSMContext):
         pass  # Не критично если query уже устарел
 
     try:
-        if data == "btn_private":
-            await send_section_video(bot, chat_id, state, PRIVATE_CHANNEL_MSG_ID)
+        if data in ("btn_private", "btn_copytrading", "btn_free_lesson"):
+            # Удаляем кружочек и меню перед отправкой видео
+            state_data = await state.get_data()
+            for key in ("note_msg_id", "menu_msg_id"):
+                msg_id = state_data.get(key)
+                if msg_id:
+                    try:
+                        await bot.delete_message(chat_id, msg_id)
+                    except Exception:
+                        pass  # Сообщение уже удалено или слишком старое
 
-        elif data == "btn_copytrading":
-            await send_section_video(bot, chat_id, state, COPYTRADING_MSG_ID)
-
-        elif data == "btn_free_lesson":
-            await send_section_video(bot, chat_id, state, FREE_LESSON_MSG_ID)
+            if data == "btn_private":
+                await send_section_video(bot, chat_id, state, PRIVATE_CHANNEL_MSG_ID)
+            elif data == "btn_copytrading":
+                await send_section_video(bot, chat_id, state, COPYTRADING_MSG_ID)
+            elif data == "btn_free_lesson":
+                await send_section_video(bot, chat_id, state, FREE_LESSON_MSG_ID)
 
         elif data == "btn_back":
+            # Удаляем видео и возвращаем главное меню
             try:
                 await callback.message.delete()
             except Exception:
