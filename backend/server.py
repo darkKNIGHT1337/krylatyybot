@@ -88,6 +88,7 @@ async def show_main_menu(bot: Bot, chat_id: int, state: FSMContext) -> None:
 async def send_section_video(bot: Bot, chat_id: int, state: FSMContext, message_id: int) -> None:
     """Копирует видео из канала и добавляет кнопку «Назад»."""
     await state.set_state(MenuStates.VIEWING_VIDEO)
+    logger.info("copy_message: from=%s msg=%d to chat=%d", VIDEO_SOURCE_CHANNEL, message_id, chat_id)
     await bot.copy_message(
         chat_id=chat_id,
         from_chat_id=VIDEO_SOURCE_CHANNEL,
@@ -128,32 +129,42 @@ async def on_new_subscriber(event: ChatMemberUpdated):
         logger.warning("Cannot DM user %d: %s", user.id, exc)
 
 
-@dp.callback_query(F.data == "btn_private")
-async def on_btn_private(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await send_section_video(bot, callback.message.chat.id, state, PRIVATE_CHANNEL_MSG_ID)
+@dp.callback_query()
+async def handle_callbacks(callback: CallbackQuery, state: FSMContext):
+    """Единый обработчик всех inline-кнопок."""
+    data = callback.data
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id
+    logger.info("Button pressed: data=%s  user=%d  chat=%d", data, user_id, chat_id)
 
-
-@dp.callback_query(F.data == "btn_copytrading")
-async def on_btn_copytrading(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await send_section_video(bot, callback.message.chat.id, state, COPYTRADING_MSG_ID)
-
-
-@dp.callback_query(F.data == "btn_free_lesson")
-async def on_btn_free_lesson(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await send_section_video(bot, callback.message.chat.id, state, FREE_LESSON_MSG_ID)
-
-
-@dp.callback_query(F.data == "btn_back")
-async def on_btn_back(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
     try:
-        await callback.message.delete()
+        await callback.answer()
     except Exception:
-        pass
-    await show_main_menu(bot, callback.message.chat.id, state)
+        pass  # Не критично если query уже устарел
+
+    try:
+        if data == "btn_private":
+            await send_section_video(bot, chat_id, state, PRIVATE_CHANNEL_MSG_ID)
+
+        elif data == "btn_copytrading":
+            await send_section_video(bot, chat_id, state, COPYTRADING_MSG_ID)
+
+        elif data == "btn_free_lesson":
+            await send_section_video(bot, chat_id, state, FREE_LESSON_MSG_ID)
+
+        elif data == "btn_back":
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
+            await show_main_menu(bot, chat_id, state)
+
+    except Exception as exc:
+        logger.error("Error handling button %s for user %d: %s", data, user_id, exc)
+        try:
+            await bot.send_message(chat_id, "Произошла ошибка. Попробуй ещё раз — /start")
+        except Exception:
+            pass
 
 
 # ─── FastAPI ──────────────────────────────────────────────────────────────────
