@@ -117,6 +117,23 @@ dp  = Dispatcher(storage=storage)
 @dp.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     logger.info("/start from user %d", message.from_user.id)
+
+    # Удаляем саму команду /start чтобы не засорять чат
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    # Удаляем предыдущие сообщения бота (кружочек + меню) если они были
+    state_data = await state.get_data()
+    for key in ("note_msg_id", "menu_msg_id"):
+        msg_id = state_data.get(key)
+        if msg_id:
+            try:
+                await bot.delete_message(message.chat.id, msg_id)
+            except Exception:
+                pass
+
     await show_main_menu(bot, message.chat.id, state)
 
 
@@ -155,16 +172,23 @@ async def handle_callbacks(callback: CallbackQuery, state: FSMContext):
 
     try:
         if data in ("btn_private", "btn_copytrading", "btn_free_lesson"):
-            # Удаляем кружочек и меню перед отправкой видео
-            state_data = await state.get_data()
-            for key in ("note_msg_id", "menu_msg_id"):
-                msg_id = state_data.get(key)
-                if msg_id:
-                    try:
-                        await bot.delete_message(chat_id, msg_id)
-                    except Exception:
-                        pass  # Сообщение уже удалено или слишком старое
+            # 1. Удаляем меню — callback.message это ВСЕГДА то сообщение,
+            #    на кнопку которого нажали. Самый надёжный способ.
+            try:
+                await callback.message.delete()
+            except Exception:
+                pass
 
+            # 2. Удаляем кружочек по сохранённому ID
+            state_data = await state.get_data()
+            note_msg_id = state_data.get("note_msg_id")
+            if note_msg_id:
+                try:
+                    await bot.delete_message(chat_id, note_msg_id)
+                except Exception:
+                    pass
+
+            # 3. Отправляем видео с кнопкой «Назад»
             if data == "btn_private":
                 await send_section_video(bot, chat_id, state, PRIVATE_CHANNEL_MSG_ID)
             elif data == "btn_copytrading":
